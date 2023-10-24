@@ -1,0 +1,5 @@
+checker/
+.gitlab-ci.yml
+.APD\ Tema_1\ 2023.pdf
+.Dockerfile
+.local.sh
