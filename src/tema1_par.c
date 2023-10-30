@@ -7,6 +7,7 @@
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
+#include <pthread.h>
 
 #define CONTOUR_CONFIG_COUNT 16
 #define FILENAME_MAX_SIZE 50
@@ -91,7 +92,6 @@ unsigned char **sample_grid(ppm_image *image, int step_x, int step_y, unsigned c
         }
     }
 
-    //  TODO - this can be parallelized
     for (int i = 0; i < p; i++)
     {
         for (int j = 0; j < q; j++)
@@ -155,7 +155,6 @@ void march(ppm_image *image, unsigned char **grid, ppm_image **contour_map, int 
 {
     int p = image->x / step_x;
     int q = image->y / step_y;
-    // TODO - this can be parallelized
     for (int i = 0; i < p; i++)
     {
         for (int j = 0; j < q; j++)
@@ -214,8 +213,6 @@ ppm_image *rescale_image(ppm_image *image)
     }
 
     // use bicubic interpolation for scaling
-    // TODO - this can be parallelized
-
     for (int i = 0; i < new_image->x; i++)
     {
         for (int j = 0; j < new_image->y; j++)
@@ -238,32 +235,10 @@ ppm_image *rescale_image(ppm_image *image)
 
 void *thread_function(void *arg)
 {
-    struct Thread_info *info = (struct Thread_info *)arg;
-
-    int thread_id = info->thread_id;
-    unsigned char sigma = SIGMA;
-    ppm_image *image = info->image;
-    ppm_image **contour_map = info->contour_map;
-
-    int step_x = STEP;
-    int step_y = STEP;
-
-    info->scaled_image = rescale_image(image);
-    info->grid = sample_grid(info->scaled_image, step_x, step_y, SIGMA);
-    march(info->scaled_image, info->grid, contour_map, step_x, step_y);
-
-    pthread_exit(NULL);
+    int thread_id = *(int *)arg;
+    printf("Hello from thread %d\n", thread_id);
+    return NULL;
 }
-
-struct Thread_info
-{
-    int thread_id;
-    unsigned char sigma;
-    ppm_image *image;
-    ppm_image **contour_map;
-    unsigned char **grid;
-    ppm_image *scaled_image;
-};
 
 int main(int argc, char *argv[])
 {
@@ -278,27 +253,31 @@ int main(int argc, char *argv[])
     pthread_t tid[P];
     int thread_id[P];
 
-    ppm_image *image = read_ppm(argv[1]);
+    for (int i = 0; i < P; i++)
+    {
+        thread_id[i] = i;
+        pthread_create(&(tid[i]), NULL, thread_function, &(thread_id[i]));
+    }
 
+    ppm_image *image = read_ppm(argv[1]);
+    int step_x = STEP;
+    int step_y = STEP;
+
+    // 0. Initialize contour map
     ppm_image **contour_map = init_contour_map();
 
-    struct Thread_info info[P];
-    for (int i = 0; i < P; i++)
-    {
-        info[i].thread_id = i;
-        info[i].image = image;
-        info[i].contour_map = contour_map;
-        pthread_create(&(tid[i]), NULL, thread_function, &(info[i]));
-    }
+    // 1. Rescale the image
+    ppm_image *scaled_image = rescale_image(image);
 
-    for (int i = 0; i < P; i++)
-    {
-        pthread_join(tid[i], NULL);
-    }
+    // 2. Sample the grid
+    unsigned char **grid = sample_grid(scaled_image, step_x, step_y, SIGMA);
 
+    // 3. March the squares
+    march(scaled_image, grid, contour_map, step_x, step_y);
+
+    // 4. Write output
     write_ppm(scaled_image, argv[2]);
 
-    int step_x = STEP;
     free_resources(scaled_image, contour_map, grid, step_x);
 
     return 0;

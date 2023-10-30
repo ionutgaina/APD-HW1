@@ -1,5 +1,7 @@
 checker/
 gitlab-ci.yml
 *.pdf
+*.ppm
 Dockerfile
 local.sh
+.vscode/
