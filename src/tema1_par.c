@@ -26,6 +26,14 @@
         v = max;           \
     }
 
+typedef struct thread_data
+{
+    int P;
+    int thread_id;
+    ppm_image *image;
+    ppm_image *new_image;
+} thread_data;
+
 // Creates a map between the binary configuration (e.g. 0110_2) and the corresponding pixels
 // that need to be set on the output image. An array is used for this map since the keys are
 // binary numbers in 0-15. Contour images are located in the './contours' directory.
@@ -185,35 +193,40 @@ void free_resources(ppm_image *image, ppm_image **contour_map, unsigned char **g
     free(image);
 }
 
-ppm_image *rescale_image(ppm_image *image)
+ppm_image *rescale_image(ppm_image *image, thread_data *data)
 {
     uint8_t sample[3];
 
-    // we only rescale downwards
-    if (image->x <= RESCALE_X && image->y <= RESCALE_Y)
-    {
-        return image;
-    }
+    // // we only rescale downwards
+    // if (image->x <= RESCALE_X && image->y <= RESCALE_Y)
+    // {
+    //     return image;
+    // }
 
-    // alloc memory for image
-    ppm_image *new_image = (ppm_image *)malloc(sizeof(ppm_image));
-    if (!new_image)
-    {
-        fprintf(stderr, "Unable to allocate memory\n");
-        exit(1);
-    }
-    new_image->x = RESCALE_X;
-    new_image->y = RESCALE_Y;
+    // // alloc memory for image
+    // ppm_image *new_image = (ppm_image *)malloc(sizeof(ppm_image));
+    // if (!new_image)
+    // {
+    //     fprintf(stderr, "Unable to allocate memory\n");
+    //     exit(1);
+    // }
+    // new_image->x = RESCALE_X;
+    // new_image->y = RESCALE_Y;
 
-    new_image->data = (ppm_pixel *)malloc(new_image->x * new_image->y * sizeof(ppm_pixel));
-    if (!new_image)
-    {
-        fprintf(stderr, "Unable to allocate memory\n");
-        exit(1);
-    }
+    // new_image->data = (ppm_pixel *)malloc(new_image->x * new_image->y * sizeof(ppm_pixel));
+    // if (!new_image)
+    // {
+    //     fprintf(stderr, "Unable to allocate memory\n");
+    //     exit(1);
+    // }
+
+    ppm_image *new_image = data->new_image;
+
+    int start = data->thread_id * (new_image->x / data->P);
+    int end = (data->thread_id + 1) * (new_image->x / data->P);
 
     // use bicubic interpolation for scaling
-    for (int i = 0; i < new_image->x; i++)
+    for (int i = start; i < end; i++)
     {
         for (int j = 0; j < new_image->y; j++)
         {
@@ -227,16 +240,17 @@ ppm_image *rescale_image(ppm_image *image)
         }
     }
 
-    free(image->data);
-    free(image);
-
     return new_image;
 }
 
 void *thread_function(void *arg)
 {
-    int thread_id = *(int *)arg;
-    printf("Hello from thread %d\n", thread_id);
+    thread_data *data = (thread_data *)arg;
+
+    ppm_image *image = data->image;
+
+    rescale_image(image, data);
+
     return NULL;
 }
 
@@ -252,12 +266,7 @@ int main(int argc, char *argv[])
 
     pthread_t tid[P];
     int thread_id[P];
-
-    for (int i = 0; i < P; i++)
-    {
-        thread_id[i] = i;
-        pthread_create(&(tid[i]), NULL, thread_function, &(thread_id[i]));
-    }
+    thread_data data[P];
 
     ppm_image *image = read_ppm(argv[1]);
     int step_x = STEP;
@@ -267,7 +276,51 @@ int main(int argc, char *argv[])
     ppm_image **contour_map = init_contour_map();
 
     // 1. Rescale the image
-    ppm_image *scaled_image = rescale_image(image);
+
+    ppm_image *scaled_image;
+
+    // we only rescale downwards
+    if (!(image->x <= RESCALE_X && image->y <= RESCALE_Y))
+    {
+        // alloc memory for image
+        ppm_image *new_image = (ppm_image *)malloc(sizeof(ppm_image));
+        if (!new_image)
+        {
+            fprintf(stderr, "Unable to allocate memory\n");
+            exit(1);
+        }
+
+        new_image->x = RESCALE_X;
+        new_image->y = RESCALE_Y;
+
+        new_image->data = (ppm_pixel *)malloc(new_image->x * new_image->y * sizeof(ppm_pixel));
+        if (!new_image)
+        {
+            fprintf(stderr, "Unable to allocate memory\n");
+            exit(1);
+        }
+
+        for (int i = 0; i < P; i++)
+        {
+            data[i].P = P;
+            data[i].thread_id = i;
+            data[i].new_image = new_image;
+            data[i].image = image;
+            pthread_create(&(tid[i]), NULL, thread_function, &(data[i]));
+        }
+
+        for (int i = 0; i < P; i++)
+        {
+            pthread_join(tid[i], NULL);
+        }
+        free(image->data);
+        free(image);
+        scaled_image = new_image;
+    }
+    else
+    {
+        scaled_image = image;
+    }
 
     // 2. Sample the grid
     unsigned char **grid = sample_grid(scaled_image, step_x, step_y, SIGMA);
